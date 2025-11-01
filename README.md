@@ -1,5 +1,7 @@
 ## Overview  
-  
+
+This project was done for an assignment during an interview, the assignment can be found in the root: `Data_Engineer_Technical_Assessment.pdf`.
+
 The project follows an architecture with the following structure:  
   
 ```  
