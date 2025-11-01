@@ -1,0 +1,146 @@
+version: '3'
+
+vars:
+  # Docker image configuration
+  DOCKER_NAMESPACE: jua
+  DOCKER_IMAGE_NAME: jua_assignment
+  DOCKER_IMAGE_TAG: latest
+  DOCKER_IMAGE_FULL_NAME: '{{.DOCKER_NAMESPACE}}/{{.DOCKER_IMAGE_NAME}}:{{.DOCKER_IMAGE_TAG}}'
+  DIRS: src/ tests/ script/
+  RAW_DATA_DIR: /Users/teospadotto/Documents/project/Python/jua/assignment/raw
+  PROCESSING_DATA_DIR: /Users/teospadotto/Documents/project/Python/jua/assignment/processing
+
+tasks:
+  lint:
+    desc: Run formatting and linting tools with auto-fix
+    cmds:
+      - # Run ruff format
+      - uv run ruff format {{.DIRS}}
+      # Run ruff with auto-fix
+      - uv run ruff check {{.DIRS}} --fix
+      # Sort imports
+      - uv run isort {{.DIRS}}
+      # Run mypy
+      - uv run mypy {{.DIRS}}
+    silent: false
+
+  test:
+    desc: Run all tests with pytest
+    cmds:
+      - uv run pytest tests/ -v
+    silent: false
+
+  build:
+    desc: Builds the Docker image
+#    deps: [lint, test]
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE_FULL_NAME}} .
+    silent: false
+
+  run-ingestion:
+    desc: Runs the data ingestion with mounted volume
+    cmds:
+      - >
+        docker run 
+        -v {{.RAW_DATA_DIR}}:/app/raw_directory 
+        {{.DOCKER_IMAGE_FULL_NAME}}
+        ingestion.py --
+        --raw-directory /app/raw_directory
+        --start-date 2022-01-01 
+        --end-date 2022-12-31
+    silent: false
+
+  run-processing:
+    desc: Runs the data processing
+    vars:
+      H3_RESOLUTIONS: '4'
+      DASK_N_WORKERS: '1'
+      DASK_THREADS_PER_WORKER: '1'
+      DASK_MEMORY_LIMIT: '4GB'
+    cmds:
+      - >
+        docker run 
+        -v {{.RAW_DATA_DIR}}:/app/raw_directory
+        -v {{.PROCESSING_DATA_DIR}}:/app/processing_directory 
+        {{.DOCKER_IMAGE_FULL_NAME}}
+        processing.py
+        --raw-directory /app/raw_directory/date-variable-single_level/2022/
+        --output-directory /app/processing_directory
+        --h3-resolutions {{.H3_RESOLUTIONS}}
+        --compression gzip
+        --n-workers {{.DASK_N_WORKERS}}
+        --threads-per-worker {{.DASK_THREADS_PER_WORKER}}
+        --memory-limit '{{.DASK_MEMORY_LIMIT}}'
+        --log-level INFO
+    silent: false
+
+  run-query:
+    desc: Execute query example
+    cmds:
+      - >
+        docker run 
+        -v {{.PROCESSING_DATA_DIR}}:/app/processing_directory
+        {{.DOCKER_IMAGE_FULL_NAME}}
+        query_example.py
+        --parquet_path /app/processing_directory
+        --query_type custom_sql
+        --sql_query "SELECT * FROM weather_data WHERE date_format(time, 'yyyy-MM-dd') = '2022-03-31'"
+    silent: false
+
+  run-ingestion-local:
+    desc: execute ingestion script using local env with uv
+    cmds:
+      - >
+        PYTHONPATH=. uv run python script/ingestion.py
+        --raw-directory {{.RAW_DATA_DIR}}
+        --start-date 2022-01-01 
+        --end-date 2022-01-01
+    silent: false
+
+  run-processing-local:
+    desc: Execute processing script using local env with uv
+    vars:
+      H3_RESOLUTIONS: '4'
+      DASK_N_WORKERS: '2'
+      DASK_THREADS_PER_WORKER: '1'
+      DASK_MEMORY_LIMIT: '16GB'
+    cmds:
+      - >
+        PYTHONPATH=. uv run python script/processing.py
+        --raw-directory "{{.RAW_DATA_DIR}}/date-variable-single_level/2022/"
+        --output-directory "{{.PROCESSING_DATA_DIR}}"
+        --h3-resolutions {{.H3_RESOLUTIONS}}
+        --compression gzip
+        --n-workers {{.DASK_N_WORKERS}}
+        --threads-per-worker {{.DASK_THREADS_PER_WORKER}}
+        --memory-limit "{{.DASK_MEMORY_LIMIT}}"
+        --log-level DEBUG
+    silent: false
+
+  run-query-local:
+    desc: Execute query script using local env with uv
+    cmds:
+      - >
+        PYTHONPATH=. uv run python script/query_example.py
+        --parquet_path {{.PROCESSING_DATA_DIR}}
+        --query_type h3_time
+        --end_date '2022-10-28'
+        --start_date '2022-10-20'
+        --no-compute
+        --h3_resolution 4
+    silent: false
+
+  clean:
+    desc: Clean up cache directories and temporary files
+    cmds:
+      - rm -rf __pycache__
+      - rm -rf **/__pycache__
+      - rm -rf .pytest_cache
+      - rm -rf .ruff_cache
+      - rm -rf .mypy_cache
+    silent: false
+
+  default:
+    # Default task that runs lint and tests before building
+    desc: Default task that runs quality checks and build
+    deps: [lint, test, build] 
